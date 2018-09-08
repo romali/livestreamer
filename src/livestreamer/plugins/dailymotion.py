@@ -5,7 +5,7 @@ from functools import reduce
 from livestreamer.compat import urlparse, range
 from livestreamer.plugin import Plugin
 from livestreamer.plugin.api import http, validate
-from livestreamer.stream import HDSStream, HTTPStream, RTMPStream
+from livestreamer.stream import HDSStream, HLSStream, HTTPStream, RTMPStream
 from livestreamer.stream.playlist import FLVPlaylist
 
 COOKIES = {
@@ -32,7 +32,7 @@ _rtmp_re = re.compile("""
 _url_re = re.compile("""
     http(s)?://(\w+\.)?
     dailymotion.com
-    (/embed)?/video
+    (/embed)?/(video|live)
     /(?P<media_id>[^_?/]+)
 """, re.VERBOSE)
 
@@ -107,7 +107,6 @@ class DailyMotion(Plugin):
             return self._get_vod_streams(params)
 
     def _get_live_streams(self, params, swf_url):
-        streams = {}
         for key, quality in QUALITY_MAP.items():
             key_url = "{0}URL".format(key)
             url = params.get(key_url)
@@ -121,11 +120,12 @@ class DailyMotion(Plugin):
                 continue
 
             if quality == "hds":
-                hds_streams = HDSStream.parse_manifest(self.session, res.url)
-                for name, stream in hds_streams.items():
+                streams = HDSStream.parse_manifest(self.session, res.url)
+                for name, stream in streams.items():
                     if key == "source":
                         name += "+"
-                    streams[name] = stream
+
+                    yield name, stream
             elif res.text.startswith("rtmp"):
                 match = _rtmp_re.match(res.text)
                 if not match:
@@ -139,9 +139,7 @@ class DailyMotion(Plugin):
                     "live": True
                 })
 
-                streams[quality] = stream
-
-        return streams
+                yield quality, stream
 
     def _create_flv_playlist(self, template):
         res = http.get(template)
@@ -151,7 +149,7 @@ class DailyMotion(Plugin):
         url_template = "{0}://{1}{2}".format(
             parsed.scheme, parsed.netloc, playlist["template"]
         )
-        segment_max = reduce(lambda i,j: i+j[0], playlist["fragments"], 0)
+        segment_max = reduce(lambda i,j: i + j[0], playlist["fragments"], 0)
 
         substreams = [HTTPStream(self.session,
                                  url_template.replace("$fragment$", str(i)))
@@ -169,19 +167,29 @@ class DailyMotion(Plugin):
             return
 
         res = http.get(manifest_url)
-        manifest = http.json(res, schema=_vod_manifest_schema)
-        streams = {}
-        for params in manifest["alternates"]:
-            name = "{0}p".format(params["height"])
-            stream = self._create_flv_playlist(params["template"])
-            streams[name] = stream
+        if res.headers.get("Content-Type") == "application/f4m+xml":
+            streams = HDSStream.parse_manifest(self.session, res.url)
 
-            failover = params.get("failover")
-            if failover:
-                stream = self._create_flv_playlist(failover[0])
-                streams[name + "_alt"] = stream
+            # TODO: Replace with "yield from" when dropping Python 2.
+            for __ in streams.items():
+                yield __
+        elif res.headers.get("Content-Type") == "application/vnd.apple.mpegurl":
+            streams = HLSStream.parse_variant_playlist(self.session, res.url)
 
-        return streams
+            # TODO: Replace with "yield from" when dropping Python 2.
+            for __ in streams.items():
+                yield __
+        else:
+            manifest = http.json(res, schema=_vod_manifest_schema)
+            for params in manifest["alternates"]:
+                name = "{0}p".format(params["height"])
+                stream = self._create_flv_playlist(params["template"])
+                yield name, stream
+
+                failovers = params.get("failover", [])
+                for failover in failovers:
+                    stream = self._create_flv_playlist(failover)
+                    yield name, stream
 
     def _get_streams(self):
         match = _url_re.match(self.url)

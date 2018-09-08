@@ -1,86 +1,72 @@
 Livestreamer
 ============
 
-.. image:: https://badge.fury.io/py/livestreamer.png
-    :target: http://badge.fury.io/py/livestreamer
+.. image:: http://img.shields.io/pypi/v/livestreamer.svg?style=flat-square
+    :target: https://pypi.python.org/pypi/livestreamer
 
-.. image:: https://secure.travis-ci.org/chrippa/livestreamer.png
+.. image:: http://img.shields.io/pypi/dm/livestreamer.svg?style=flat-square
+    :target: https://pypi.python.org/pypi/livestreamer
+
+.. image:: http://img.shields.io/travis/chrippa/livestreamer.svg?style=flat-square
     :target: http://travis-ci.org/chrippa/livestreamer
 
-.. image:: https://pypip.in/d/livestreamer/badge.png
-    :target: https://crate.io/packages/livestreamer?version=latest
-
-.. image:: docs/_static/flattr-badge.png
-    :target: https://flattr.com/submit/auto?user_id=chrippa&url=https%3A%2F%2Fgithub.com%2Fchrippa%2Flivestreamer
 
 
-Livestreamer is CLI program that extracts streams from various services and pipes them into
-a video player of choice.
+Overview
+--------
 
-* Documentation: http://livestreamer.tanuki.se/
-* Discussions: https://groups.google.com/forum/#!forum/livestreamer
-* IRC: #livestreamer @ Freenode
-* GitHub: https://github.com/chrippa/livestreamer
-* PyPI: https://pypi.python.org/pypi/livestreamer
-* Free software: Simplified BSD license
+Livestreamer is a `command-line utility`_ that pipes video streams
+from various services into a video player, such as `VLC <http://videolan.org/>`_.
+The main purpose of Livestreamer is to allow the user to avoid buggy and CPU
+heavy flash plugins but still be able to enjoy various streamed content.
+There is also an `API`_ available for developers who want access
+to the video stream data.
 
+- Documentation: http://docs.livestreamer.io/
+- Issue tracker: https://github.com/chrippa/livestreamer/issues
+- PyPI: https://pypi.python.org/pypi/livestreamer
+- Discussions: https://groups.google.com/forum/#!forum/livestreamer
+- IRC: #livestreamer @ Freenode
+- Free software: Simplified BSD license
+
+.. _command-line utility: http://docs.livestreamer.io/cli.html
+.. _API: http://docs.livestreamer.io/api_guide.html
 
 Features
 --------
 
 Livestreamer is built upon a plugin system which allows support for new services
-to be easily added.
+to be easily added. Currently most of the big streaming services are supported,
+such as:
 
-Currently most of the big streaming services are supported, e.g.
-`Dailymotion <http://dailymotion.com/live/>`_,
-`Livestream <http://livestream.com>`_,
-`Justin.tv <http://justin.tv>`_,
-`Twitch <http://twitch.tv/>`_,
-`UStream <http://ustream.tv>`_ and
-`YouTube Live <http://youtube.com/live/>`_.
+- `Dailymotion <http://dailymotion.com/live>`_
+- `Livestream <http://livestream.com>`_
+- `Twitch <http://twitch.tv>`_
+- `UStream <http://ustream.tv>`_
+- `YouTube Live <http://youtube.com>`_
 
-Installing
-----------
+... and many more. A full list of plugins currently included can be found
+on the `Plugins`_ page.
 
-The latest stable version is available to install using `pip <http://www.pip-installer.org/>`_:
+.. _Plugins: http://docs.livestreamer.io/plugin_matrix.html
 
-.. code-block:: bash
+Quickstart
+-----------
 
-    $ pip install livestreamer
+The default behaviour of Livestreamer is to playback a stream in the default
+player (`VLC <http://videolan.org/>`_).
 
-or installing from a source directory:
+.. sourcecode:: console
 
-.. code-block:: bash
-
-    $ python setup.py install
-
-`The Hitchhiker’s Guide to Python <http://docs.python-guide.org/>`_ has guides
-helping you install Python + pip on the most common operating systems.
-
-Updating
-----------
-
-.. code-block:: bash
-
-    $ pip install --upgrade livestreamer
-
-Usage
------
-
-The default behaviour of Livestreamer is to transport a stream to your player
-software (default is VLC).
-
-.. code-block:: console
-
+    # pip install livestreamer
     $ livestreamer twitch.tv/day9tv best
     [cli][info] Found matching plugin twitch for URL twitch.tv/day9tv
     [cli][info] Opening stream: source
     [cli][info] Starting player: vlc
 
+For more in-depth usage and install instructions see the `User guide`_.
 
-For more in-depth usage and install instructions see the full documentation available
-at http://livestreamer.tanuki.se/.
-
+.. _User guide: http://docs.livestreamer.io/index.html#user-guide
 
 Related software
 ----------------

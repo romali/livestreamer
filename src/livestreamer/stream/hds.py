@@ -7,6 +7,7 @@ import os.path
 
 from binascii import unhexlify
 from collections import namedtuple
+from copy import deepcopy
 from hashlib import sha256
 from io import BytesIO
 from math import ceil
@@ -19,7 +20,7 @@ from .stream import Stream
 from .wrappers import StreamIOIterWrapper
 
 from ..cache import Cache
-from ..compat import parse_qsl, urljoin, urlparse, bytes, range
+from ..compat import parse_qsl, urljoin, urlparse, urlunparse, bytes, range
 from ..exceptions import StreamError
 from ..utils import absolute_url, swfdecompress
 
@@ -45,8 +46,12 @@ Fragment = namedtuple("Fragment", "segment fragment duration url")
 
 
 class HDSStreamWriter(SegmentedStreamWriter):
-    def __init__(self, *args, **kwargs):
-        SegmentedStreamWriter.__init__(self, *args, **kwargs)
+    def __init__(self, reader, *args, **kwargs):
+        options = reader.stream.session.options
+        kwargs["retries"] = options.get("hds-segment-attempts")
+        kwargs["threads"] = options.get("hds-segment-threads")
+        kwargs["timeout"] = options.get("hds-segment-timeout")
+        SegmentedStreamWriter.__init__(self, reader, *args, **kwargs)
 
         duration, tags = None, []
         if self.stream.metadata:
@@ -57,30 +62,24 @@ class HDSStreamWriter(SegmentedStreamWriter):
         self.concater = FLVTagConcat(tags=tags,
                                      duration=duration,
                                      flatten_timestamps=True)
-        self.segment_attempts = self.session.options.get("hds-segment-attempts")
-        self.segment_timeout = self.session.options.get("hds-segment-timeout")
 
-    def open_fragment(self, fragment, retries=3):
+    def fetch(self, fragment, retries=None):
         if self.closed or not retries:
             return
 
         try:
             return self.session.http.get(fragment.url,
                                          stream=True,
-                                         timeout=self.segment_timeout,
+                                         timeout=self.timeout,
                                          exception=StreamError,
                                          **self.stream.request_params)
         except StreamError as err:
             self.logger.error("Failed to open fragment {0}-{1}: {2}",
                               fragment.segment, fragment.fragment, err)
-            return self.open_fragment(fragment, retries - 1)
+            return self.fetch(fragment, retries - 1)
 
-    def write(self, fragment, chunk_size=8192):
-        res = self.open_fragment(fragment, self.segment_attempts)
-        if not res:
-            return
-
-        fd = StreamIOIterWrapper(res.iter_content(8192))
+    def write(self, fragment, res, chunk_size=8192):
+        fd = StreamIOIterWrapper(res.iter_content(chunk_size))
         self.convert_fragment(fragment, fd)
 
     def convert_fragment(self, fragment, fd):
@@ -374,7 +373,22 @@ class HDSStream(Stream):
         self.bootstrap = bootstrap
         self.metadata = metadata
         self.timeout = timeout
-        self.request_params = request_params
+
+        # Deep copy request params to make it mutable
+        self.request_params = deepcopy(request_params)
+
+        parsed = urlparse(self.url)
+        if parsed.query:
+            params = parse_qsl(parsed.query)
+            if params:
+                if not self.request_params.get("params"):
+                    self.request_params["params"] = {}
+
+                self.request_params["params"].update(params)
+
+        self.url = urlunparse(
+            (parsed.scheme, parsed.netloc, parsed.path, None, None, None)
+        )
 
     def __repr__(self):
         return ("<HDSStream({0!r}, {1!r}, {2!r},"
@@ -416,8 +430,9 @@ class HDSStream(Stream):
 
         if not request_params:
             request_params = {}
-            request_params["headers"] = {}
-            request_params["params"] = {}
+
+        request_params["headers"] = request_params.get("headers", {})
+        request_params["params"] = request_params.get("params", {})
 
         # These params are reserved for internal use
         request_params.pop("exception", None)
@@ -439,7 +454,10 @@ class HDSStream(Stream):
         streams = {}
 
         if not baseurl:
-            baseurl = urljoin(url, os.path.dirname(parsed.path)) + "/"
+            baseurl = urljoin(url, os.path.dirname(parsed.path))
+
+        if not baseurl.endswith("/"):
+            baseurl += "/"
 
         for bootstrap in manifest.findall("bootstrapInfo"):
             name = bootstrap.attrib.get("id") or "_global"
@@ -459,7 +477,7 @@ class HDSStream(Stream):
                 raise IOError("This manifest requires the 'pvswf' parameter "
                               "to verify the SWF")
 
-            params = cls._pv_params(session, pvswf, pvtoken)
+            params = cls._pv_params(session, pvswf, pvtoken, **request_params)
             request_params["params"].update(params)
 
         for media in manifest.findall("media"):
@@ -520,7 +538,7 @@ class HDSStream(Stream):
         return streams
 
     @classmethod
-    def _pv_params(cls, session, pvswf, pv):
+    def _pv_params(cls, session, pvswf, pv, **request_params):
         """Returns any parameters needed for Akamai HD player verification.
 
         Algorithm originally documented by KSV, source:
@@ -537,10 +555,11 @@ class HDSStream(Stream):
         key = "akamaihd-player:" + pvswf
         cached = cache.get(key)
 
-        headers = dict()
+        request_params = deepcopy(request_params)
+        headers = request_params.pop("headers", {})
         if cached:
             headers["If-Modified-Since"] = cached["modified"]
-        swf = session.http.get(pvswf, headers=headers)
+        swf = session.http.get(pvswf, headers=headers, **request_params)
 
         if cached and swf.status_code == 304:  # Server says not modified
             hash = cached["hash"]
@@ -567,4 +586,3 @@ class HDSStream(Stream):
         params.extend(parse_qsl(hdntl, keep_blank_values=True))
 
         return params
-

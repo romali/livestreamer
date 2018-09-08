@@ -15,34 +15,37 @@ _filesize_re = re.compile("""
     (?P<modifier>[Kk]|[Mm])?
     (?:[Bb])?
 """, re.VERBOSE)
+_keyvalue_re = re.compile("(?P<key>[^=]+)\s*=\s*(?P<value>.*)")
 _printable_re = re.compile("[{0}]".format(printable))
-_valid_option_start_re = re.compile("^[A-z]")
-_valid_option_char_re = re.compile("[A-z\-]")
+_option_re = re.compile("""
+    (?P<name>[A-z-]+) # A option name, valid characters are A to z and dash.
+    \s*
+    (?P<op>=)? # Separating the option and the value with a equals sign is
+               # common, but optional.
+    \s*
+    (?P<value>.*) # The value, anything goes.
+""", re.VERBOSE)
 
 
 class ArgumentParser(argparse.ArgumentParser):
-    def sanitize_option(self, option):
-        return "".join(filter(_valid_option_char_re.match, option))
-
     def convert_arg_line_to_args(self, line):
         # Strip any non-printable characters that might be in the
         # beginning of the line (e.g. Unicode BOM marker).
         match = _printable_re.search(line)
         if not match:
             return
-        line = line[match.start():]
+        line = line[match.start():].strip()
 
-        # Skip lines that do not start with a valid option character (e.g. comments)
-        if not _valid_option_start_re.match(line):
+        # Skip lines that do not start with a valid option (e.g. comments)
+        option = _option_re.match(line)
+        if not option:
             return
 
-        split = line.find("=")
-        if split > 0:
-            option = line[:split].strip()
-            value = line[split+1:].strip()
-            yield "--{0}={1}".format(self.sanitize_option(option), value)
-        else:
-            yield "--{0}".format(self.sanitize_option(line))
+        name, value = option.group("name", "value")
+        if name and value:
+            yield "--{0}={1}".format(name, value)
+        elif name:
+            yield "--{0}".format(name)
 
 
 class HelpFormatter(argparse.RawDescriptionHelpFormatter):
@@ -76,15 +79,28 @@ def comma_list_filter(acceptable):
     return func
 
 
-def nonzero_num(type):
+def num(type, min=None, max=None):
     def func(value):
         value = type(value)
-        if not value:
-            raise ValueError
+
+        if min is not None and not (value > min):
+            raise argparse.ArgumentTypeError(
+                "{0} value must be more than {1} but is {2}".format(
+                    type.__name__, min, value
+                )
+            )
+
+        if max is not None and not (value <= max):
+            raise argparse.ArgumentTypeError(
+                "{0} value must be at most {1} but is {2}".format(
+                    type.__name__, max, value
+                )
+            )
 
         return value
 
-    func.__name__ = "non-zero {0}".format(type.__name__)
+    func.__name__ = type.__name__
+
     return func
 
 
@@ -103,11 +119,15 @@ def filesize(value):
     elif modifier in ("K", "k"):
         size *= 1024
 
-    return int(size)
+    return num(int, min=0)(size)
 
 
-float = nonzero_num(float)
-int = nonzero_num(int)
+def keyvalue(value):
+    match = _keyvalue_re.match(value)
+    if not match:
+        raise ValueError
+
+    return match.group("key", "value")
 
 
 parser = ArgumentParser(
@@ -121,7 +141,7 @@ parser = ArgumentParser(
     """),
     epilog=dedent("""
     For more in-depth documention see:
-      http://livestreamer.tanuki.se/
+      http://docs.livestreamer.io/
 
     Please report broken plugins or bugs to the issue tracker on Github:
       https://github.com/chrippa/livestreamer/issues
@@ -182,6 +202,17 @@ general.add_argument(
     """
 )
 general.add_argument(
+    "--can-handle-url",
+    metavar="URL",
+    help="""
+    Check if Livestreamer has a plugin that can handle the specified URL.
+
+    Returns status code 1 for false and 0 for true.
+
+    Useful for external scripting.
+    """
+)
+general.add_argument(
     "--config",
     action="append",
     metavar="FILENAME",
@@ -229,6 +260,13 @@ general.add_argument(
     """
 )
 general.add_argument(
+    "--version-check",
+    action="store_true",
+    help="""
+    Runs a version check and exits.
+    """
+)
+general.add_argument(
     "--yes-run-as-root",
     action="store_true",
     help=argparse.SUPPRESS
@@ -263,13 +301,16 @@ player.add_argument(
     are put together with the value of --player to create a command
     to execute.
 
+    This value can contain formatting variables surrounded by curly
+    braces, {{ and }}. If you need to include a brace character, it
+    can be escaped by doubling, e.g. {{{{ and }}}}.
+
     Formatting variables available:
 
     filename
       This is the filename that the player will use.
       It's usually "-" (stdin), but can also be a URL or a file
       depending on the options used.
-
 
     It's usually enough to use --player instead of this unless you
     need to add arguments after the filename.
@@ -312,11 +353,32 @@ player.add_argument(
     is capable of reconnecting to a HTTP stream. This is usually
     done by setting your player to a "repeat mode".
 
-    Note: Some stream types may end up looping the last part of a
-    stream once or twice when it ends. This is caused by a lack of
-    shared state between attempts to use a stream and may be fixed in
-    the future.
+    """
+)
+player.add_argument(
+    "--player-external-http",
+    action="store_true",
+    help="""
+    Serve stream data through HTTP without running any player. This is useful
+    to allow external devices like smartphones or streaming boxes to watch
+    streams they wouldn't be able to otherwise.
 
+    Behavior will be similar to the continuous HTTP option, but no player
+    program will be started, and the server will listen on all available
+    connections instead of just in the local (loopback) interface.
+
+    The URLs that can be used to access the stream will be printed to the
+    console, and the server can be interrupted using CTRL-C.
+    """
+)
+player.add_argument(
+    "--player-external-http-port",
+    metavar="PORT",
+    type=num(int, min=0, max=65535),
+    default=0,
+    help="""
+    A fixed port to use for the external HTTP server if that mode is enabled.
+    Omit or set to 0 to use a random high (>1024) port.
     """
 )
 player.add_argument(
@@ -386,7 +448,7 @@ stream.add_argument(
 stream.add_argument(
     "--retry-streams",
     metavar="DELAY",
-    type=float,
+    type=num(float, min=0),
     help="""
     Will retry fetching streams until streams are found while
     waiting DELAY (seconds) between each attempt.
@@ -395,7 +457,7 @@ stream.add_argument(
 stream.add_argument(
     "--retry-open",
     metavar="ATTEMPTS",
-    type=int,
+    type=num(int, min=0),
     default=1,
     help="""
     Will try ATTEMPTS times to open the stream until giving up.
@@ -447,7 +509,7 @@ stream.add_argument(
 transport = parser.add_argument_group("Stream transport options")
 transport.add_argument(
     "--hds-live-edge",
-    type=float,
+    type=num(float, min=0),
     metavar="SECONDS",
     help="""
     The time live HDS streams will start from the edge of stream.
@@ -457,7 +519,7 @@ transport.add_argument(
 )
 transport.add_argument(
     "--hds-segment-attempts",
-    type=int,
+    type=num(int, min=0),
     metavar="ATTEMPTS",
     help="""
     How many attempts should be done to download each HDS segment
@@ -467,8 +529,19 @@ transport.add_argument(
     """
 )
 transport.add_argument(
+    "--hds-segment-threads",
+    type=num(int, max=10),
+    metavar="THREADS",
+    help="""
+    The size of the thread pool used to download HDS segments.
+    Minimum value is 1 and maximum is 10.
+
+    Default is 1.
+    """
+)
+transport.add_argument(
     "--hds-segment-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     HDS segment connect and read timeout.
@@ -478,7 +551,7 @@ transport.add_argument(
 )
 transport.add_argument(
     "--hds-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     Timeout for reading data from HDS streams.
@@ -488,7 +561,7 @@ transport.add_argument(
 )
 transport.add_argument(
     "--hls-live-edge",
-    type=int,
+    type=num(int, min=0),
     metavar="SEGMENTS",
     help="""
     How many segments from the end to start live HLS streams on.
@@ -501,7 +574,7 @@ transport.add_argument(
 )
 transport.add_argument(
     "--hls-segment-attempts",
-    type=int,
+    type=num(int, min=0),
     metavar="ATTEMPTS",
     help="""
     How many attempts should be done to download each HLS segment
@@ -511,8 +584,19 @@ transport.add_argument(
     """
 )
 transport.add_argument(
+    "--hls-segment-threads",
+    type=num(int, max=10),
+    metavar="THREADS",
+    help="""
+    The size of the thread pool used to download HLS segments.
+    Minimum value is 1 and maximum is 10.
+
+    Default is 1.
+    """
+)
+transport.add_argument(
     "--hls-segment-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     HLS segment connect and read timeout.
@@ -521,7 +605,7 @@ transport.add_argument(
     """)
 transport.add_argument(
     "--hls-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     Timeout for reading data from HLS streams.
@@ -530,7 +614,7 @@ transport.add_argument(
     """)
 transport.add_argument(
     "--http-stream-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     Timeout for reading data from HTTP streams.
@@ -586,7 +670,7 @@ transport.add_argument(
 )
 transport.add_argument(
     "--rtmp-timeout",
-    type=float,
+    type=num(float, min=0),
     metavar="TIMEOUT",
     help="""
     Timeout for reading data from RTMP streams.
@@ -594,6 +678,57 @@ transport.add_argument(
     Default is 60.0.
     """
 )
+transport.add_argument(
+    "--stream-segment-attempts",
+    type=num(int, min=0),
+    metavar="ATTEMPTS",
+    help="""
+    How many attempts should be done to download each segment before giving up.
+
+    This is generic option used by streams not covered by other options,
+    such as stream protocols specific to plugins, e.g. UStream.
+
+    Default is 3.
+    """
+)
+transport.add_argument(
+    "--stream-segment-threads",
+    type=num(int, max=10),
+    metavar="THREADS",
+    help="""
+    The size of the thread pool used to download segments.
+    Minimum value is 1 and maximum is 10.
+
+    This is generic option used by streams not covered by other options,
+    such as stream protocols specific to plugins, e.g. UStream.
+
+    Default is 1.
+    """
+)
+transport.add_argument(
+    "--stream-segment-timeout",
+    type=num(float, min=0),
+    metavar="TIMEOUT",
+    help="""
+    Segment connect and read timeout.
+
+    This is generic option used by streams not covered by other options,
+    such as stream protocols specific to plugins, e.g. UStream.
+
+    Default is 10.0.
+    """)
+transport.add_argument(
+    "--stream-timeout",
+    type=num(float, min=0),
+    metavar="TIMEOUT",
+    help="""
+    Timeout for reading data from streams.
+
+    This is generic option used by streams not covered by other options,
+    such as stream protocols specific to plugins, e.g. UStream.
+
+    Default is 60.0.
+    """)
 transport.add_argument(
     "--stream-url",
     action="store_true",
@@ -642,43 +777,36 @@ http.add_argument(
     """
 )
 http.add_argument(
-    "--http-cookies",
-    metavar="COOKIES",
+    "--http-cookie",
+    metavar="KEY=VALUE",
+    type=keyvalue,
+    action="append",
     help="""
-    A semi-colon delimited list of cookies to add to each HTTP
-    request.
+    A cookie to add to each HTTP request.
 
-    For example this will add the cookies "foo" and "baz":
-
-      "foo=bar; baz=qux"
-
+    Can be repeated to add multiple cookies.
     """
 )
 http.add_argument(
-    "--http-headers",
-    metavar="HEADERS",
+    "--http-header",
+    metavar="KEY=VALUE",
+    type=keyvalue,
+    action="append",
     help="""
-    A semi-colon delimited list of headers to add to each HTTP
-    request.
+    A header to add to each HTTP request.
 
-    For example this will add the headers "X-Forwarded-For"
-    and "User-Agent":
-
-      "X-Forwarded-For=0.0.0.0; User-Agent=foo"
-
+    Can be repeated to add multiple headers.
     """
 )
 http.add_argument(
-    "--http-query-params",
-    metavar="PARAMS",
+    "--http-query-param",
+    metavar="KEY=VALUE",
+    type=keyvalue,
+    action="append",
     help="""
-    A semi-colon delimited list of query parameters to add to each
-    HTTP request.
+    A query parameter to add to each HTTP request.
 
-    For example this will add the query parameters "foo" and "baz":
-
-      "foo=bar; baz=qux"
-
+    Can be repeated to add multiple query parameters.
     """
 )
 http.add_argument(
@@ -720,7 +848,7 @@ http.add_argument(
 http.add_argument(
     "--http-timeout",
     metavar="TIMEOUT",
-    type=float,
+    type=num(float, min=0),
     help="""
     General timeout used by all HTTP requests except the ones covered
     by other options.
@@ -760,11 +888,10 @@ plugin.add_argument(
     """
 )
 plugin.add_argument(
-    "--jtv-cookie", "--twitch-cookie",
+    "--twitch-cookie",
     metavar="COOKIES",
     help="""
-    Twitch/Justin.tv cookies to authenticate to allow access
-    to subscription channels.
+    Twitch cookies to authenticate to allow access to subscription channels.
 
     Example:
 
@@ -774,13 +901,6 @@ plugin.add_argument(
     Twitch, using --twitch-oauth-authenticate is the recommended and
     simpler way of doing it now.
 
-    """
-)
-plugin.add_argument(
-    "--jtv-password", "--twitch-password",
-    metavar="PASSWORD",
-    help="""
-    A password to access password protected Twitch/Justin.tv channels.
     """
 )
 plugin.add_argument(
@@ -815,6 +935,16 @@ plugin.add_argument(
     help="""
     Purge cached Crunchyroll credentials to initiate a new session
     and reauthenticate.
+    """
+)
+plugin.add_argument(
+    "--crunchyroll-locale",
+    metavar="LOCALE",
+    help="""
+    Indicate which locale to use for Crunchyroll subtitles.
+
+    The locale is formatted as [language_code]_[country_code], by default
+    en_US is used.
     """
 )
 plugin.add_argument(
@@ -874,6 +1004,28 @@ plugin.add_argument(
     default=None,
     help=argparse.SUPPRESS
 )
-
+plugin.add_argument(
+    "--jtv-cookie",
+    help=argparse.SUPPRESS
+)
+plugin.add_argument(
+    "--jtv-password", "--twitch-password",
+    help=argparse.SUPPRESS
+)
+http.add_argument(
+    "--http-cookies",
+    metavar="COOKIES",
+    help=argparse.SUPPRESS
+)
+http.add_argument(
+    "--http-headers",
+    metavar="HEADERS",
+    help=argparse.SUPPRESS
+)
+http.add_argument(
+    "--http-query-params",
+    metavar="PARAMS",
+    help=argparse.SUPPRESS
+)
 
 __all__ = ["parser"]

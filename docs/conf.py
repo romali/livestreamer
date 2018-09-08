@@ -18,7 +18,7 @@ sys.path.insert(0, os.path.abspath('.'))
 
 # Add any Sphinx extension module names here, as strings. They can be extensions
 # coming with Sphinx (named 'sphinx.ext.*') or your custom ones.
-extensions = ['sphinx.ext.autodoc', 'sphinxcontrib.issuetracker', 'argparse_ext']
+extensions = ['sphinx.ext.autodoc', 'ext_argparse', 'ext_github', 'ext_releaseref']
 
 # Add any paths that contain templates here, relative to this directory.
 templates_path = ['_templates']
@@ -34,7 +34,7 @@ master_doc = 'index'
 
 # General information about the project.
 project = 'Livestreamer'
-copyright = '2011-2014, Christopher Rosell'
+copyright = '2011-2015, Christopher Rosell'
 
 # The version info for the project you're documenting, acts as replacement for
 # |version| and |release|, also used in various other places throughout the
@@ -80,8 +80,7 @@ exclude_patterns = ['_build']
 # A list of ignored prefixes for module index sorting.
 #modindex_common_prefix = []
 
-issuetracker = 'github'
-issuetracker_project = 'chrippa/livestreamer'
+github_project = 'chrippa/livestreamer'
 
 # -- Options for HTML output ---------------------------------------------------
 
@@ -96,7 +95,7 @@ html_theme_options = {
     ),
     "github_user": "chrippa",
     "github_repo": "livestreamer",
-    "sticky_navigation": False
+    "sticky_navigation": True
 }
 
 # The theme to use for HTML and HTML Help pages.  See the documentation for

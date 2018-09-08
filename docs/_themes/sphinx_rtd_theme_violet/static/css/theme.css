@@ -3278,7 +3278,7 @@ select[disabled], textarea[disabled], input[readonly], select[readonly], textare
   float: right;
 }
 
-.full-width {
+.full-width, .rst-content table.docutils:not(.field-list) {
   width: 100%;
 }
 
@@ -3352,14 +3352,14 @@ select[disabled], textarea[disabled], input[readonly], select[readonly], textare
 }
 
 /* BORDERED TABLES */
-.wy-table-bordered-all, .rst-content table.docutils {
+.wy-table-bordered-all {
   border: 1px solid #e1e4e5;
 }
-.wy-table-bordered-all td, .rst-content table.docutils td {
+.wy-table-bordered-all td {
   border-bottom: 1px solid #e1e4e5;
   border-left: 1px solid #e1e4e5;
 }
-.wy-table-bordered-all tbody > tr:last-child td, .rst-content table.docutils tbody > tr:last-child td {
+.wy-table-bordered-all tbody > tr:last-child td {
   border-bottom-width: 0;
 }
 
@@ -3367,10 +3367,10 @@ select[disabled], textarea[disabled], input[readonly], select[readonly], textare
   border: 1px solid #e1e4e5;
 }
 
-.wy-table-bordered-rows td {
+.wy-table-bordered-rows td, .rst-content table.docutils td {
   border-bottom: 1px solid #e1e4e5;
 }
-.wy-table-bordered-rows tbody > tr:last-child td {
+.wy-table-bordered-rows tbody > tr:last-child td, .rst-content table.docutils tbody > tr:last-child td {
   border-bottom-width: 0;
 }
 
@@ -4023,6 +4023,9 @@ div[class^='highlight'] pre {
 .wy-menu-vertical ul {
   margin-bottom: 0;
 }
+.wy-menu-vertical li.active {
+  background: #634b89;
+}
 .wy-menu-vertical li.divide-top {
   border-top: solid 1px #404040;
 }
@@ -4188,9 +4191,6 @@ div[class^='highlight'] pre {
 
 .wy-nav-side {
   float: left;
-  position: absolute;
-  top: 0;
-  left: 0;
   width: 225px;
   overflow: hidden;
   min-height: 100%;
@@ -4209,7 +4209,7 @@ div[class^='highlight'] pre {
   position: relative;
   line-height: 50px;
   text-align: center;
-  font-size: 100%;
+  font-size: 150%;
   *zoom: 1;
 }
 .wy-nav-top:before, .wy-nav-top:after {
@@ -4223,6 +4223,9 @@ div[class^='highlight'] pre {
   color: white;
   font-weight: bold;
 }
+.wy-nav-top a:hover, .wy-nav-top a:visited:hover {
+  color: white;
+}
 .wy-nav-top img {
   margin-right: 12px;
   height: 45px;
@@ -4235,6 +4238,7 @@ div[class^='highlight'] pre {
   font-size: 30px;
   float: left;
   cursor: pointer;
+  margin-top: 8px;
 }
 
 .wy-nav-content-wrap {
@@ -4309,6 +4313,7 @@ footer p {
   }
 
   .wy-nav-side {
+    position: absolute;
     left: -225px;
   }
   .wy-nav-side.shift {
@@ -4335,6 +4340,9 @@ footer p {
     background-color: #6f5499;
   }
   .wy-side-nav-search > a, .wy-side-nav-search .wy-dropdown > a {
+    color: white;
+  }
+  .wy-side-nav-search > a:hover, .wy-side-nav-search > a:visited:hover, .wy-side-nav-search .wy-dropdown > a:hover, .wy-side-nav-search .wy-dropdown > a:visited:hover {
     color: white;
   }
 }
@@ -4608,8 +4616,19 @@ nav.stickynav {
   padding-right: 0;
   vertical-align: top;
 }
+.rst-content table.docutils {
+  border: none;
+}
+.rst-content table.docutils td, .rst-content table.docutils th {
+  border-left: none;
+  border-top: none;
+  border-right: none;
+}
 .rst-content table.docutils td {
   vertical-align: top;
+}
+.rst-content table.docutils.footnote {
+  width: auto;
 }
 .rst-content table.field-list {
   border: none;
@@ -4752,4 +4771,10 @@ a:visited:hover {
 .wy-table-responsive .wy-plain-list-disc li, .wy-table-responsive .rst-content .section ul li, .rst-content .section .wy-table-responsive ul li, .wy-table-responsive .rst-content .toctree-wrapper ul li, .rst-content .toctree-wrapper .wy-table-responsive ul li {
   list-style: none;
   margin-left: 0;
+}
+.wy-table-responsive div.highlight {
+  margin: 0;
+}
+.wy-table-responsive div.highlight pre {
+  padding: 5px;
 }

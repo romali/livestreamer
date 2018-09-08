@@ -3,7 +3,7 @@ import inspect
 import requests
 
 from .stream import Stream
-from .wrappers import StreamIOIterWrapper
+from .wrappers import StreamIOThreadWrapper, StreamIOIterWrapper
 from ..exceptions import StreamError
 
 
@@ -33,10 +33,11 @@ class HTTPStream(Stream):
 
     __shortname__ = "http"
 
-    def __init__(self, session_, url, **args):
+    def __init__(self, session_, url, buffered=True, **args):
         Stream.__init__(self, session_)
 
         self.args = dict(url=url, **args)
+        self.buffered = buffered
 
     def __repr__(self):
         return "<HTTPStream({0!r})>".format(self.url)
@@ -72,5 +73,9 @@ class HTTPStream(Stream):
                                         timeout=timeout,
                                         **self.args)
 
-        return StreamIOIterWrapper(res.iter_content(8192))
+        fd = StreamIOIterWrapper(res.iter_content(8192))
+        if self.buffered:
+            fd = StreamIOThreadWrapper(self.session, fd, timeout=timeout)
+
+        return fd
 

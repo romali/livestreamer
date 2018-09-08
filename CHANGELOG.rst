@@ -1,13 +1,205 @@
-Version 1.9.0 (Under development)
----------------------------------
+Version 1.12.2 (2015-05-02)
+---------------------------
+
+Bug fixes:
+ - hds: Don't modify request params when handling PVSWF. (#842)
+ - hls: Handle unpadded encryption IV's.
+ - Fixed regression in redirect resolver. (#816)
+
+Plugins:
+ - Added plugin for media.ccc.de (media_ccc_de), patch by @meise.
+ - Added plugin for Kanal 5/9/11 (sbsdiscovery), patch by @tboss. (#815)
+ - Added plugin for Periscope (periscope).
+ - Added plugin for SSH101 (ssh101), patch by @Razier-23. (#869)
+ - artetv: Updated for service changes.
+ - crunchyroll: Updated for service changes. (#864, #865)
+ - hitbox: Fixed VOD support. (#856)
+ - livestream: Updated for service changes.
+ - viasat: Added support for juicyplay.se.
+ - viasat: Fixed missing streams. (#822)
+ - youtube: Added support for /channel URLs. (#825)
+
+
+Version 1.12.1 (2015-03-22)
+---------------------------
+
+Bug fixes:
+ - Don't crash when failing to look up listening ports. (#790)
+
+Plugins:
+ - Added plugin for ITV Player, patch by @blxd. (#776)
+ - Added plugin for tv3.cat, patch by @blxd. (#784)
+ - Added plugin for TV Catchup, patch by @blxd. (#775)
+ - connectcast: Fixed crash, patch by @mammothb. (#779)
+ - dailymotion: Added support for HDS VODs. (#731)
+ - gaminglive: Added support for VODs, patches by @kasper93 and @chhe. (#789, #808)
+ - picarto: Updated for service changes, patch by @FireDart. (#803)
+ - tv4play: Work around bad SSL implementation on Python 2. (#785)
+ - twitch: Use correct OAuth scopes, patch by @josephglanville. (#778)
+ - ustreamtv: Updated for service changes, patch by @trUSTssc. (#799)
+ - viasat: Fixed missing streams. (#750)
+ - viasat: Added play.tv3.lt to supported URLs. (#773)
+
+Streams:
+ - hds: Fixed issue with query parameters when building fragment URLs. (#786)
+
+
+Version 1.12.0 (2015-03-01)
+---------------------------
+
+Bug fixes:
+ - Made HTTP modes more strict to avoid issues with `mpv --yt-dl`.
+ - Fixed :option:`--http-cookie` option crash.
+
+CLI:
+ - Added :option:`--can-handle-url` option, useful for scripting.
+ - Added :option:`--version-check` option to force a version check.
+ - Added a passive HTTP server mode (:option:`--player-external-http`), patch by @danielkza. (#699)
+
+Plugins:
+ - Added plugin for Disney Channel Germany, patch by @boekkooi. (#698)
+ - Added plugin for NOS (Nederlandse Omroep Stichting), patch by @boekkooi. (#697)
+ - Added plugin for tga.plu.cn, patch by @wolftankk. (#669)
+ - Added plugin for Wat.tv, patch by @boekkooi. (#701)
+ - Added plugin for afreeca.tv. (The old afreecatv plugin has been renamed to afreeca)
+ - chaturbate: Added support for subdomain URLs, patch by @GameWalker. (#676)
+ - connectcast: Updated for service changes, patch by @darvelo. (#722)
+ - dailymotion: Added support for games.dailymotion.com, patch by @daslicious. (#684)
+ - dommune: Fixed Youtube redirect URL.
+ - gaminglive: Updated for service changes, patch by @chhe. (#721)
+ - mlgtv: Updated for service changes, patch by @daslicious. (#686)
+ - hitbox: Updated for services changes. (#648)
+ - streamlive: Updated for service changes, patch by @daslicious. (#667)
+ - ustreamtv: Updated for service changes. (#707)
+ - youtube: Now handles more URL types.
+
+
+Version 1.11.1 (2014-12-12)
+---------------------------
+
+Plugins:
+ - twitch: Updated for API changes. (#633)
+
+
+Version 1.11.0 (2014-12-10)
+---------------------------
+
+Bugfixes:
+ - cli: Only apply the backslash magic on player paths on Windows.
+
+CLI:
+ - Added :option:`--http-cookie` option.
+ - Added :option:`--http-header` option.
+ - Added :option:`--http-query-param` option.
+ - Deprecated the :option:`--http-cookies` option.
+ - Deprecated the :option:`--http-headers` option.
+ - Deprecated the :option:`--http-query-params` option.
+ - Changed the continuous HTTP mode to always fetch streams.
+   Should fix segmented streams repeating at the end for most
+   services.
+
+Plugins:
+ - Added plugin for NPO, patch by @monkeyphysics. (#599)
+ - afreecatv: Updated for service changes. (#568)
+ - beattv: Updated validation schema to include float offsets, patch by @suhailpatel. (#555)
+ - douyutv: Added support for transcodes.
+ - gaminglive: Fixed quality names, patch by @chhe. (#545)
+ - goodgame: Updated for service changes, patch by @JaxxC. (#554)
+ - oldlivestream: Check that streams don't return 404. (#560)
+ - ilive: Updated for service changes and renamed to streamlive. (#563)
+ - livestation: Updated for service changes. (#581)
+ - twitch: Added support for the new video streams.
+ - vaughnlive: Updated for service changes. (#611)
+ - veetle: Fixed shortcut URLs, patch by @monkeyphysics. (#601)
+ - viasat/viagame: Updated for service changes (#564, #566, #617)
+
+Plugin API:
+ - Added a class to simplify mapping data to stream objects.
+
+
+Version 1.10.2 (2014-09-05)
+---------------------------
+
+Plugins:
+ - Added plugin for Arte.tv (artetv). (#457)
+ - Added plugin for RTVE.es (rtve), patch by @jaimeMF. (#509)
+ - Added plugin for Seemeplay.ru (seemeplay). (#510)
+ - euronews: Updated for service changes.
+ - filmon: Updated for service changes. (#514)
+ - gaminglive: Updated for service changes, patch by @chhe. (#524)
+ - twitch: Now handles videos with chunks that are missing URLs.
+ - vaughnlive: Added support for breakers.tv, instagib.tv and vapers.tv. (#521)
+ - youtube: Added support for audio-only streams. (#522)
+
+
+Version 1.10.1 (2014-08-22)
+---------------------------
+
+Bug fixes:
+ - Fixed strange read error caused by double buffering in FLV playlists.
+
+Plugins:
+ - Added plugin for Vaughn Live (vaughnlive). (#478)
+
+
+Version 1.10.0 (2014-08-18)
+---------------------------
+
+Bug fixes:
+ - The HDS options added in 1.8.0 where never actually applied when
+   used via the CLI, oops.
+ - Fixed default player paths not expanding ~, patch by @medina. (#484)
+
+CLI:
+ - Added :option:`--hds-segment-threads` option.
+ - Added :option:`--hls-segment-threads` option.
+ - Added :option:`--stream-segment-attempts` option.
+ - Added :option:`--stream-segment-threads` option.
+ - Added :option:`--stream-segment-timeout` option.
+ - Added :option:`--stream-timeout` option.
+ - Deprecated the :option:`--jtv-cookie` option.
+ - Deprecated the :option:`--jtv-password` option.
+ - Significantly improved the status line printed while writing a
+   stream to a file. (#462)
+
+Plugins:
+ - Added plugin for goodgame.ru (goodgame), patch by @eltiren. (#466)
+ - Added plugin for gaminglive.tv (gaminglive), patch by @chhe. (#468)
+ - Added plugin for douyutv.com (douyutv), patch by @nixxquality. (#469)
+ - Added plugin for NHK World (nhkworld).
+ - Added plugin for Let On TV (letontv), patch by @cheah. (#500)
+ - Removed plugin: justintv.
+ - afreecatv: Updated for service changes. (#488)
+ - hitbox: Added support for HLS videos.
+ - twitch: Fixed some Twitch broadcasts being unplayable. (#490)
+ - ustreamtv: Fixed regression that caused channels using RTMP streams to fail.
+
+Streams:
+ - akamaihd: Now supports background buffering.
+ - http: Now supports background buffering.
+
+API:
+ - Added new session option: ``hds-segment-threads``.
+ - Added new session option: ``hls-segment-threads``.
+ - Added new session option: ``stream-segment-attempts``.
+ - Added new session option: ``stream-segment-threads``.
+ - Added new session option: ``stream-segment-timeout``.
+ - Added new session option: ``stream-timeout``.
+
+
+Version 1.9.0 (2014-07-22)
+--------------------------
 
 General:
  - **Dropped support for Python 3.2.** This is due to missing features
    which are necessary for this projects progression.
+ - `singledispatch <https://pypi.python.org/pypi/singledispatch>`_ is now a
+   dependency on Python <3.4.
 
 Bug fixes:
  - Handle bad input data better in parse_json/xml. (#440)
  - Handle bad input data in config files. (#432)
+ - Fixed regression causing rtmpdump proxies to have no effect.
 
 CLI:
  - Improved :option:`--help` significantly, more readable and more content.
@@ -15,15 +207,17 @@ CLI:
  - Added :option:`--stream-url` option. (#281)
  - Added support for K and M suffixes to the :option:`--ringbuffer-size` option.
  - Added support for loading config files based on plugin.
+ - Added ~/Applications to the search path for VLC on Mac OS X, patch by @maxnordlund. (#454)
  - Deprecated :option:`--best-stream-default` and added :option:`--default-stream`
    as a more flexible replacement. (#381)
- - Will no longer annoy you on every invocation about any newer versions available.
+ - Will now only warn about newer versions available every 6 hours.
 
 Plugins:
  - Many plugins have been refactored to use the validation API and better coding standards.
  - Added plugin for Aftonbladet (aftonbladet).
  - Added plugin for ARD Live (ard_live), patch by @MasterofJOKers. (#419)
  - Added plugin for ARD Mediathek (ard_mediathek), patch by @yeeeargh. (#421)
+ - Added plugin for Connect Cast (connectcast). (#423)
  - Added plugin for Danmarks Radio (drdk).
  - Added plugin for DOMMUNE (dommune).
  - Added plugin for TV4 Play (tv4play).
@@ -31,13 +225,15 @@ Plugins:
  - Removed plugin: cast3d
  - Removed plugin: freedocast
  - Removed plugin: hashd
- - Removed plugin: ongamnet
+ - Removed plugin: ongamenet
  - afreecatv: Updated for service changes. (#412, #413)
  - dailymotion: Added support for source streams, patch by @kasper93. (#428)
+ - euronews: Added support for videos.
  - nrk: Added support for radio.nrk.no, patch by @jantore. (#433)
  - picarto: Updated for service changes. (#431)
  - twitch: Added support for audio only streams, patch by @CommanderRoot. (#411)
  - viasat: Added support for HDS streams.
+ - viasat: Added support for viagame.com.
 
 API:
  - Added :func:`Livestreamer.streams` method.
@@ -548,4 +744,3 @@ General:
  - Added unit tests, still fairly small coverage though.
  - Added travis-ci integration.
  - Now using python-sh on *nix since python-pbs is deprecated.
-

@@ -1,5 +1,3 @@
-from __future__ import unicode_literals
-
 import json
 import sys
 
@@ -45,15 +43,6 @@ class ConsoleOutput(object):
         formatted = "{0}\n".format(formatted)
 
         self.output.write(formatted)
-
-    def msg_inplace(self, msg, *args, **kwargs):
-        formatted = msg.format(*args, **kwargs)
-        formatted = "\r{0}".format(formatted)
-
-        sys.stderr.write(formatted)
-
-    def msg_inplace_end(self):
-        sys.stderr.write("\n")
 
     def msg_json(self, obj):
         if not self.json:

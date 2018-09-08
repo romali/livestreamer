@@ -6,8 +6,10 @@ import signal
 import webbrowser
 
 from contextlib import closing
-from time import sleep
 from distutils.version import StrictVersion
+from functools import partial
+from itertools import chain
+from time import sleep
 
 from livestreamer import (Livestreamer, StreamError, PluginError,
                           NoPluginError)
@@ -19,12 +21,12 @@ from .compat import stdout, is_win32
 from .console import ConsoleOutput
 from .constants import CONFIG_FILES, PLUGINS_DIR, STREAM_SYNONYMS
 from .output import FileOutput, PlayerOutput
-from .utils import NamedPipe, HTTPServer, ignored, stream_to_url
+from .utils import NamedPipe, HTTPServer, ignored, progress, stream_to_url
 
 ACCEPTABLE_ERRNO = (errno.EPIPE, errno.EINVAL, errno.ECONNRESET)
 QUIET_OPTIONS = ("json", "stream_url", "subprocess_cmdline", "quiet")
 
-args = console = livestreamer = plugin = None
+args = console = livestreamer = plugin = stream_fd = output = None
 
 
 def check_file_output(filename, force):
@@ -89,12 +91,16 @@ def create_output():
     return out
 
 
-def create_http_server():
-    """Creates a HTTP server listening on a random port."""
+def create_http_server(host=None, port=0):
+    """Creates a HTTP server listening on a given host and port.
+
+    If host is empty, listen on all available interfaces, and if port is 0,
+    listen on a random high port.
+    """
 
     try:
         http = HTTPServer()
-        http.bind()
+        http.bind(host=host, port=port)
     except OSError as err:
         console.exit("Failed to create HTTP server: {0}", err)
 
@@ -102,62 +108,70 @@ def create_http_server():
 
 
 def iter_http_requests(server, player):
-    """Accept HTTP connections while the player is running."""
+    """Repeatedly accept HTTP connections on a server.
 
-    while player.running:
+    Forever if the serving externally, or while a player is running if it is not
+    empty.
+    """
+
+    while not player or player.running:
         try:
             yield server.open(timeout=2.5)
         except OSError:
             continue
 
 
-def output_stream_http(plugin, streams):
+def output_stream_http(plugin, initial_streams, external=False, port=0):
     """Continuously output the stream over HTTP."""
+    global output
 
-    server = create_http_server()
+    if not external:
+        if not args.player:
+            console.exit("The default player (VLC) does not seem to be "
+                         "installed. You must specify the path to a player "
+                         "executable with --player.")
 
-    if not args.player:
-        console.exit("The default player (VLC) does not seem to be "
-                     "installed. You must specify the path to a player "
-                     "executable with --player.")
+        server = create_http_server()
+        player = output = PlayerOutput(args.player, args=args.player_args,
+                                       filename=server.url,
+                                       quiet=not args.verbose_player)
 
-    player = PlayerOutput(args.player, args=args.player_args,
-                          filename=server.url,
-                          quiet=not args.verbose_player)
-    stream_names = [resolve_stream_name(streams, s) for s in args.stream]
+        try:
+            console.logger.info("Starting player: {0}", args.player)
+            if player:
+                player.open()
+        except OSError as err:
+            console.exit("Failed to start player: {0} ({1})",
+                         args.player, err)
+    else:
+        server = create_http_server(host=None, port=port)
+        player = None
 
-    try:
-        console.logger.info("Starting player: {0}", args.player)
-        player.open()
-    except OSError as err:
-        console.exit("Failed to start player: {0} ({1})",
-                     args.player, err)
+        console.logger.info("Starting server, access with one of:")
+        for url in server.urls:
+            console.logger.info(" " + url)
 
     for req in iter_http_requests(server, player):
         user_agent = req.headers.get("User-Agent") or "unknown player"
         console.logger.info("Got HTTP request from {0}".format(user_agent))
 
-        stream = stream_fd = None
-        while not stream_fd:
-            if not player.running:
-                break
-
+        stream_fd = prebuffer = None
+        while not stream_fd and (not player or player.running):
             try:
-                streams = streams or fetch_streams(plugin)
-                for stream_name in stream_names:
-                    stream = streams.get(stream_name)
-                    if stream: break
-                else:
-                    stream = None
+                streams = initial_streams or fetch_streams(plugin)
+                initial_streams = None
 
+                for stream_name in (resolve_stream_name(streams, s) for s in args.stream):
+                    if stream_name in streams:
+                        stream = streams[stream_name]
+                        break
+                else:
+                    console.logger.info("Stream not available, will re-fetch "
+                                        "streams in 10 sec")
+                    sleep(10)
+                    continue
             except PluginError as err:
                 console.logger.error(u"Unable to fetch new streams: {0}", err)
-
-            if not stream:
-                console.logger.info("Stream not available, will re-fetch "
-                                    "streams in 10 sec")
-                streams = None
-                sleep(10)
                 continue
 
             try:
@@ -166,8 +180,8 @@ def output_stream_http(plugin, streams):
                 stream_fd, prebuffer = open_stream(stream)
             except StreamError as err:
                 console.logger.error("{0}", err)
-                stream = streams = None
-        else:
+
+        if stream_fd and prebuffer:
             console.logger.debug("Writing stream to player")
             read_stream(stream_fd, server, prebuffer)
 
@@ -179,15 +193,16 @@ def output_stream_http(plugin, streams):
 
 def output_stream_passthrough(stream):
     """Prepares a filename to be passed to the player."""
+    global output
 
     filename = '"{0}"'.format(stream_to_url(stream))
-    out = PlayerOutput(args.player, args=args.player_args,
-                       filename=filename, call=True,
-                       quiet=not args.verbose_player)
+    output = PlayerOutput(args.player, args=args.player_args,
+                          filename=filename, call=True,
+                          quiet=not args.verbose_player)
 
     try:
         console.logger.info("Starting player: {0}", args.player)
-        out.open()
+        output.open()
     except OSError as err:
         console.exit("Failed to start player: {0} ({1})", args.player, err)
         return False
@@ -202,6 +217,7 @@ def open_stream(stream):
     before opening the output.
 
     """
+    global stream_fd
 
     # Attempts to open the stream
     try:
@@ -225,6 +241,7 @@ def open_stream(stream):
 
 def output_stream(stream):
     """Open stream, create output and finally write the stream to output."""
+    global output
 
     for i in range(args.retry_open):
         try:
@@ -254,57 +271,46 @@ def output_stream(stream):
     return True
 
 
-def read_stream(stream, output, prebuffer):
+def read_stream(stream, output, prebuffer, chunk_size=8192):
     """Reads data from stream and then writes it to the output."""
-
     is_player = isinstance(output, PlayerOutput)
     is_http = isinstance(output, HTTPServer)
     is_fifo = is_player and output.namedpipe
     show_progress = isinstance(output, FileOutput) and output.fd is not stdout
-    written = 0
 
-    while True:
-        try:
-            data = prebuffer or stream.read(8192)
-        except IOError as err:
-            console.logger.error("Error when reading from stream: {0}",
-                                 str(err))
-            break
+    stream_iterator = chain(
+        [prebuffer],
+        iter(partial(stream.read, chunk_size), b"")
+    )
+    if show_progress:
+        stream_iterator = progress(stream_iterator,
+                                   prefix=os.path.basename(args.output))
 
-        if len(data) == 0:
-            break
+    try:
+        for data in stream_iterator:
+            # We need to check if the player process still exists when
+            # using named pipes on Windows since the named pipe is not
+            # automatically closed by the player.
+            if is_win32 and is_fifo:
+                output.player.poll()
 
-        # We need to check if the player process still exists when
-        # using named pipes on Windows since the named pipe is not
-        # automatically closed by the player.
-        if is_win32 and is_fifo:
-            output.player.poll()
+                if output.player.returncode is not None:
+                    console.logger.info("Player closed")
+                    break
 
-            if output.player.returncode is not None:
-                console.logger.info("Player closed")
+            try:
+                output.write(data)
+            except IOError as err:
+                if is_player and err.errno in ACCEPTABLE_ERRNO:
+                    console.logger.info("Player closed")
+                elif is_http and err.errno in ACCEPTABLE_ERRNO:
+                    console.logger.info("HTTP connection closed")
+                else:
+                    console.logger.error("Error when writing to output: {0}", err)
+
                 break
-
-        try:
-            output.write(data)
-        except IOError as err:
-            if is_player and err.errno in ACCEPTABLE_ERRNO:
-                console.logger.info("Player closed")
-            elif is_http and err.errno in ACCEPTABLE_ERRNO:
-                console.logger.info("HTTP connection closed")
-            else:
-                console.logger.error("Error when writing to output: {0}",
-                                     err)
-
-            break
-
-        written += len(data)
-        prebuffer = None
-
-        if show_progress:
-            console.msg_inplace("Written {0} bytes", written)
-
-    if show_progress and written > 0:
-        console.msg_inplace_end()
+    except IOError as err:
+        console.logger.error("Error when reading from stream: {0}", err)
 
     stream.close()
     console.logger.info("Stream ended")
@@ -364,6 +370,9 @@ def handle_stream(plugin, streams, stream_name):
                 console.logger.info("Opening stream: {0} ({1})", stream_name,
                                     stream_type)
                 success = output_stream_passthrough(stream)
+            elif args.player_external_http:
+                return output_stream_http(plugin, streams, external=True,
+                                          port=args.player_external_http_port)
             elif args.player_continuous_http and not file_output:
                 return output_stream_http(plugin, streams)
             else:
@@ -408,7 +417,7 @@ def fetch_streams_infinite(plugin, interval):
 def resolve_stream_name(streams, stream_name):
     """Returns the real stream name of a synonym."""
 
-    if stream_name in STREAM_SYNONYMS:
+    if stream_name in STREAM_SYNONYMS and stream_name in streams:
         for name, stream in streams.items():
             if stream is streams[stream_name] and name not in STREAM_SYNONYMS:
                 return name
@@ -416,18 +425,22 @@ def resolve_stream_name(streams, stream_name):
     return stream_name
 
 
-def format_valid_streams(streams):
+def format_valid_streams(plugin, streams):
     """Formats a dict of streams.
 
     Filters out synonyms and displays them next to
     the stream they point to.
+
+    Streams are sorted according to their quality
+    (based on plugin.stream_weight).
 
     """
 
     delimiter = ", "
     validstreams = []
 
-    for name, stream in sorted(streams.items()):
+    for name, stream in sorted(streams.items(),
+                               key=lambda stream: plugin.stream_weight(stream[0])):
         if name in STREAM_SYNONYMS:
             continue
 
@@ -478,7 +491,7 @@ def handle_url():
         args.stream = args.default_stream
 
     if args.stream:
-        validstreams = format_valid_streams(streams)
+        validstreams = format_valid_streams(plugin, streams)
         for stream_name in args.stream:
             if stream_name in streams:
                 console.logger.info("Available streams: {0}", validstreams)
@@ -498,7 +511,7 @@ def handle_url():
         if console.json:
             console.msg_json(dict(streams=streams, plugin=plugin.module))
         else:
-            validstreams = format_valid_streams(streams)
+            validstreams = format_valid_streams(plugin, streams)
             console.msg("Available streams: {0}", validstreams)
 
 
@@ -522,7 +535,7 @@ def authenticate_twitch_oauth():
     redirect_uri = "http://livestreamer.tanuki.se/en/develop/twitch_oauth.html"
     url = ("https://api.twitch.tv/kraken/oauth2/authorize/"
            "?response_type=token&client_id={0}&redirect_uri="
-           "{1}&scope=user_read").format(client_id, redirect_uri)
+           "{1}&scope=user_read+user_subscriptions").format(client_id, redirect_uri)
 
     console.msg("Attempting to open a browser to let you authenticate "
                 "Livestreamer with Twitch")
@@ -625,14 +638,14 @@ def setup_http_session():
     if args.https_proxy:
         livestreamer.set_option("https-proxy", args.https_proxy)
 
-    if args.http_cookies:
-        livestreamer.set_option("http-cookies", args.http_cookies)
+    if args.http_cookie:
+        livestreamer.set_option("http-cookies", dict(args.http_cookie))
 
-    if args.http_headers:
-        livestreamer.set_option("http-headers", args.http_headers)
+    if args.http_header:
+        livestreamer.set_option("http-headers", dict(args.http_header))
 
-    if args.http_query_params:
-        livestreamer.set_option("http-query-params", args.http_query_params)
+    if args.http_query_param:
+        livestreamer.set_option("http-query-params", dict(args.http_query_param))
 
     if args.http_ignore_env:
         livestreamer.set_option("http-trust-env", False)
@@ -648,6 +661,22 @@ def setup_http_session():
 
     if args.http_timeout:
         livestreamer.set_option("http-timeout", args.http_timeout)
+
+    if args.http_cookies:
+        console.logger.warning("The option --http-cookies is deprecated since "
+                               "version 1.11.0, use --http-cookie instead.")
+        livestreamer.set_option("http-cookies", args.http_cookies)
+
+    if args.http_headers:
+        console.logger.warning("The option --http-headers is deprecated since "
+                               "version 1.11.0, use --http-header instead.")
+        livestreamer.set_option("http-headers", args.http_headers)
+
+    if args.http_query_params:
+        console.logger.warning("The option --http-query-params is deprecated since "
+                               "version 1.11.0, use --http-query-param instead.")
+        livestreamer.set_option("http-query-params", args.http_query_params)
+
 
 def setup_plugins():
     """Loads any additional plugins."""
@@ -673,6 +702,9 @@ def setup_options():
     if args.hls_segment_attempts:
         livestreamer.set_option("hls-segment-attempts", args.hls_segment_attempts)
 
+    if args.hls_segment_threads:
+        livestreamer.set_option("hls-segment-threads", args.hls_segment_threads)
+
     if args.hls_segment_timeout:
         livestreamer.set_option("hls-segment-timeout", args.hls_segment_timeout)
 
@@ -681,6 +713,18 @@ def setup_options():
 
     if args.hds_live_edge:
         livestreamer.set_option("hds-live-edge", args.hds_live_edge)
+
+    if args.hds_segment_attempts:
+        livestreamer.set_option("hds-segment-attempts", args.hds_segment_attempts)
+
+    if args.hds_segment_threads:
+        livestreamer.set_option("hds-segment-threads", args.hds_segment_threads)
+
+    if args.hds_segment_timeout:
+        livestreamer.set_option("hds-segment-timeout", args.hds_segment_timeout)
+
+    if args.hds_timeout:
+        livestreamer.set_option("hds-timeout", args.hds_timeout)
 
     if args.http_stream_timeout:
         livestreamer.set_option("http-stream-timeout", args.http_stream_timeout)
@@ -697,6 +741,18 @@ def setup_options():
     if args.rtmp_timeout:
         livestreamer.set_option("rtmp-timeout", args.rtmp_timeout)
 
+    if args.stream_segment_attempts:
+        livestreamer.set_option("stream-segment-attempts", args.stream_segment_attempts)
+
+    if args.stream_segment_threads:
+        livestreamer.set_option("stream-segment-threads", args.stream_segment_threads)
+
+    if args.stream_segment_timeout:
+        livestreamer.set_option("stream-segment-timeout", args.stream_segment_timeout)
+
+    if args.stream_timeout:
+        livestreamer.set_option("stream-timeout", args.stream_timeout)
+
     livestreamer.set_option("subprocess-errorlog", args.subprocess_errorlog)
 
     # Deprecated options
@@ -705,19 +761,12 @@ def setup_options():
                                "and will be removed in the future. Use "
                                "--ringbuffer-size instead")
 
+
 def setup_plugin_options():
     """Sets Livestreamer plugin options."""
-    if args.jtv_cookie:
-        livestreamer.set_plugin_option("justintv", "cookie",
-                                       args.jtv_cookie)
+    if args.twitch_cookie:
         livestreamer.set_plugin_option("twitch", "cookie",
-                                       args.jtv_cookie)
-
-    if args.jtv_password:
-        livestreamer.set_plugin_option("justintv", "password",
-                                       args.jtv_password)
-        livestreamer.set_plugin_option("twitch", "password",
-                                       args.jtv_password)
+                                       args.twitch_cookie)
 
     if args.twitch_oauth_token:
         livestreamer.set_plugin_option("twitch", "oauth_token",
@@ -743,6 +792,10 @@ def setup_plugin_options():
         livestreamer.set_plugin_option("crunchyroll", "purge_credentials",
                                        args.crunchyroll_purge_credentials)
 
+    if args.crunchyroll_locale:
+        livestreamer.set_plugin_option("crunchyroll", "locale",
+                                       args.crunchyroll_locale)
+
     if args.livestation_email:
         livestreamer.set_plugin_option("livestation", "email",
                                        args.livestation_email)
@@ -755,6 +808,14 @@ def setup_plugin_options():
     if args.jtv_legacy_names:
         console.logger.warning("The option --jtv/twitch-legacy-names is "
                                "deprecated and will be removed in the future.")
+
+    if args.jtv_cookie:
+        console.logger.warning("The option --jtv-cookie is deprecated and "
+                               "will be removed in the future.")
+
+    if args.jtv_password:
+        console.logger.warning("The option --jtv-password is deprecated "
+                               "and will be removed in the future.")
 
     if args.gomtv_username:
         console.logger.warning("The option --gomtv-username is deprecated "
@@ -778,18 +839,18 @@ def check_root():
             sys.exit(1)
 
 
-def check_version():
+def check_version(force=False):
     cache = Cache(filename="cli.json")
     latest_version = cache.get("latest_version")
 
-    if not latest_version:
+    if force or not latest_version:
         res = requests.get("https://pypi.python.org/pypi/livestreamer/json")
         data = res.json()
         latest_version = data.get("info").get("version")
         cache.set("latest_version", latest_version, (60 * 60 * 24))
 
     version_info_printed = cache.get("version_info_printed")
-    if version_info_printed:
+    if not force and version_info_printed:
         return
 
     installed_version = StrictVersion(livestreamer.version)
@@ -799,6 +860,12 @@ def check_version():
         console.logger.info("A new version of Livestreamer ({0}) is "
                             "available!".format(latest_version))
         cache.set("version_info_printed", True, (60 * 60 * 6))
+    elif force:
+        console.logger.info("Your Livestreamer version ({0}) is up to date!",
+                            installed_version)
+
+    if force:
+        sys.exit()
 
 
 def main():
@@ -810,18 +877,46 @@ def main():
     setup_console()
     setup_http_session()
 
-    if not args.no_version_check:
+    if args.version_check or not args.no_version_check:
         with ignored(Exception):
-            check_version()
+            check_version(force=args.version_check)
 
     if args.plugins:
         print_plugins()
+    elif args.can_handle_url:
+        try:
+            livestreamer.resolve_url(args.can_handle_url)
+        except NoPluginError:
+            sys.exit(1)
+        else:
+            sys.exit(0)
     elif args.url:
-        with ignored(KeyboardInterrupt):
+        try:
             setup_options()
             setup_plugin_options()
             handle_url()
+        except KeyboardInterrupt:
+            # Close output
+            if output:
+                output.close()
+
+            # Make sure current stream gets properly cleaned up
+            if stream_fd:
+                console.msg("Interrupted! Closing currently open stream...")
+                try:
+                    stream_fd.close()
+                except KeyboardInterrupt:
+                    sys.exit()
+            else:
+                console.msg("Interrupted! Exiting...")
     elif args.twitch_oauth_authenticate:
         authenticate_twitch_oauth()
-    else:
+    elif args.help:
         parser.print_help()
+    else:
+        usage = parser.format_usage()
+        msg = (
+            "{usage}\nUse -h/--help to see the available options or "
+            "read the manual at http://docs.livestreamer.io/"
+        ).format(usage=usage)
+        console.msg(msg)

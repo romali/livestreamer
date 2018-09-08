@@ -23,28 +23,16 @@ Sequence = namedtuple("Sequence", "num segment")
 
 
 class HLSStreamWriter(SegmentedStreamWriter):
-    def __init__(self, *args, **kwargs):
-        SegmentedStreamWriter.__init__(self, *args, **kwargs)
+    def __init__(self, reader, *args, **kwargs):
+        options = reader.stream.session.options
+        kwargs["retries"] = options.get("hls-segment-attempts")
+        kwargs["threads"] = options.get("hls-segment-threads")
+        kwargs["timeout"] = options.get("hls-segment-timeout")
+        SegmentedStreamWriter.__init__(self, reader, *args, **kwargs)
 
         self.byterange_offsets = defaultdict(int)
         self.key_data = None
         self.key_uri = None
-        self.segment_attempts = self.session.options.get("hls-segment-attempts")
-        self.segment_timeout = self.session.options.get("hls-segment-timeout")
-
-    def open_sequence(self, sequence, retries=3):
-        if self.closed or not retries:
-            return
-
-        try:
-            request_params = self.create_request_params(sequence)
-            return self.session.http.get(sequence.segment.uri,
-                                         timeout=self.segment_timeout,
-                                         exception=StreamError,
-                                         **request_params)
-        except StreamError as err:
-            self.logger.error("Failed to open segment {0}: {1}", sequence.num, err)
-            return self.open_sequence(sequence, retries - 1)
 
     def create_decryptor(self, key, sequence):
         if key.method != "AES-128":
@@ -60,6 +48,10 @@ class HLSStreamWriter(SegmentedStreamWriter):
             self.key_uri = key.uri
 
         iv = key.iv or num_to_iv(sequence)
+
+        # Pad IV if needed
+        iv = b"\x00" * (16 - len(iv)) + iv
+
         return AES.new(self.key_data, AES.MODE_CBC, iv)
 
     def create_request_params(self, sequence):
@@ -80,11 +72,21 @@ class HLSStreamWriter(SegmentedStreamWriter):
 
         return request_params
 
-    def write(self, sequence, chunk_size=8192):
-        res = self.open_sequence(sequence, self.segment_attempts)
-        if not res:
+    def fetch(self, sequence, retries=None):
+        if self.closed or not retries:
             return
 
+        try:
+            request_params = self.create_request_params(sequence)
+            return self.session.http.get(sequence.segment.uri,
+                                         timeout=self.timeout,
+                                         exception=StreamError,
+                                         **request_params)
+        except StreamError as err:
+            self.logger.error("Failed to open segment {0}: {1}", sequence.num, err)
+            return self.fetch(sequence, retries - 1)
+
+    def write(self, sequence, res, chunk_size=8192):
         if sequence.segment.key and sequence.segment.key.method != "NONE":
             try:
                 decryptor = self.create_decryptor(sequence.segment.key,
@@ -107,6 +109,7 @@ class HLSStreamWriter(SegmentedStreamWriter):
 
         self.reader.buffer.write(content)
         self.logger.debug("Download of segment {0} complete", sequence.num)
+
 
 class HLSStreamWorker(SegmentedStreamWorker):
     def __init__(self, *args, **kwargs):
@@ -153,10 +156,9 @@ class HLSStreamWorker(SegmentedStreamWorker):
     def process_sequences(self, playlist, sequences):
         first_sequence, last_sequence = sequences[0], sequences[-1]
 
-        if (first_sequence.segment.key and
-            first_sequence.segment.key.method != "NONE"):
-
+        if first_sequence.segment.key and first_sequence.segment.key.method != "NONE":
             self.logger.debug("Segments in this playlist are encrypted")
+
             if not CAN_DECRYPT:
                 raise StreamError("Need pyCrypto installed to decrypt this stream")
 
@@ -258,8 +260,22 @@ class HLSStream(HTTPStream):
         return reader
 
     @classmethod
-    def parse_variant_playlist(cls, session_, url, namekey="name",
-                               nameprefix="", **request_params):
+    def parse_variant_playlist(cls, session_, url, name_key="name",
+                               name_prefix="", check_streams=False,
+                               **request_params):
+        """Attempts to parse a variant playlist and return its streams.
+
+        :param url: The URL of the variant playlist.
+        :param name_key: Prefer to use this key as stream name, valid keys are:
+                         name, pixels, bitrate.
+        :param name_prefix: Add this prefix to the stream names.
+        :param check_streams: Only allow streams that are accesible.
+        """
+
+        # Backwards compatibility with "namekey" and "nameprefix" params.
+        name_key = request_params.pop("namekey", name_key)
+        name_prefix = request_params.pop("nameprefix", name_prefix)
+
         res = session_.http.get(url, exception=IOError, **request_params)
 
         try:
@@ -283,18 +299,23 @@ class HLSStream(HTTPStream):
                 bw = playlist.stream_info.bandwidth
 
                 if bw >= 1000:
-                    names["bitrate"] = "{0}k".format(int(bw/1000.0))
+                    names["bitrate"] = "{0}k".format(int(bw / 1000.0))
                 else:
-                    names["bitrate"] = "{0}k".format(bw/1000.0)
+                    names["bitrate"] = "{0}k".format(bw / 1000.0)
 
-            stream_name = (names.get(namekey) or names.get("name") or
+            stream_name = (names.get(name_key) or names.get("name") or
                            names.get("pixels") or names.get("bitrate"))
 
             if not stream_name or stream_name in streams:
                 continue
 
+            if check_streams:
+                try:
+                    session_.http.get(playlist.uri, **request_params)
+                except Exception:
+                    continue
+
             stream = HLSStream(session_, playlist.uri, **request_params)
-            streams[nameprefix + stream_name] = stream
+            streams[name_prefix + stream_name] = stream
 
         return streams
-
